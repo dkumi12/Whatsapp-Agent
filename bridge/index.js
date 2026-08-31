@@ -15,12 +15,10 @@ const pino = require('pino');
 const app = express();
 const QR_PORT = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:8080/webhook/whatsapp';
-const PHONE_NUMBER = process.env.PHONE_NUMBER || '';
 
 let latestQR = null;
-let pairingCode = null;
 let isConnected = false;
-let sockInstance = null;
+let sock = null;
 
 function extractMessageText(message) {
     if (!message) return null;
@@ -41,17 +39,6 @@ app.get('/qr', async (req, res) => {
             <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#57df9b;">
                 <h2 style="font-size:28px;">✅ WhatsApp Bridge is Connected 24/7!</h2>
                 <p style="color:#a9bdd3;margin-top:10px;">Your cloud agent is actively listening for cohort messages.</p>
-            </div>
-        `);
-    }
-    if (pairingCode) {
-        return res.send(`
-            <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#fff;">
-                <h2>WhatsApp 8-Digit Pairing Code</h2>
-                <div style="font-size:36px;letter-spacing:8px;font-weight:bold;background:#10243d;color:#5ee7f7;padding:18px 28px;border-radius:12px;border:1px solid #25425f;margin:20px 0;">
-                    ${pairingCode}
-                </div>
-                <p style="color:#a9bdd3;">Open WhatsApp &gt; Linked Devices &gt; Link with phone number instead</p>
             </div>
         `);
     }
@@ -76,11 +63,11 @@ app.get('/qr', async (req, res) => {
 });
 
 app.get('/groups', async (req, res) => {
-    if (!sockInstance || !isConnected) {
+    if (!sock || !isConnected) {
         return res.status(400).send('<h3>WhatsApp Bridge is not connected yet.</h3>');
     }
     try {
-        const groups = await sockInstance.groupFetchAllParticipating();
+        const groups = await sock.groupFetchAllParticipating();
         const list = Object.values(groups).map(g => ({
             id: g.id,
             name: g.subject,
@@ -120,115 +107,116 @@ app.listen(QR_PORT, () => {
     console.log(`🌐 QR Web Page: http://localhost:${QR_PORT}/qr`);
 });
 
+let isConnecting = false;
+
 async function startBridge() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-    
-    // Use stable browser signature for Linux cloud VMs
-    const sock = makeWASocket({
-        auth: state,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: true,
-        browser: Browsers.ubuntu('Chrome'),
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 0,
-        keepAliveIntervalMs: 10000,
-        syncFullHistory: false
-    });
+    if (isConnecting) return;
+    isConnecting = true;
 
-    sockInstance = sock;
-    sock.ev.on('creds.update', saveCreds);
-
-    if (PHONE_NUMBER && !sock.authState.creds.registered) {
-        setTimeout(async () => {
-            try {
-                const code = await sock.requestPairingCode(PHONE_NUMBER.replace(/[^0-9]/g, ''));
-                pairingCode = code;
-                console.log(`\n🔑 WHATSAPP PAIRING CODE: ${code}`);
-            } catch (err) {
-                console.error('Failed to request pairing code:', err.message);
-            }
-        }, 3000);
-    }
-
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr } = update;
+    try {
+        const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
         
-        if (qr) {
-            latestQR = qr;
-            console.log('📱 Fresh QR code generated!');
-            qrcodeTerminal.generate(qr, { small: true });
-        }
-        
-        if (connection === 'close') {
-            isConnected = false;
-            const statusCode = lastDisconnect?.error?.output?.statusCode;
-            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`Connection closed (status: ${statusCode}). Reconnecting in 5s: ${shouldReconnect}`);
-            if (shouldReconnect) {
-                setTimeout(startBridge, 5000);
+        sock = makeWASocket({
+            auth: state,
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: true,
+            browser: Browsers.ubuntu('Chrome'),
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 0,
+            keepAliveIntervalMs: 10000,
+            syncFullHistory: false
+        });
+
+        sock.ev.on('creds.update', saveCreds);
+
+        sock.ev.on('connection.update', (update) => {
+            const { connection, lastDisconnect, qr } = update;
+            
+            if (qr) {
+                latestQR = qr;
+                console.log('📱 Fresh QR code generated!');
+                qrcodeTerminal.generate(qr, { small: true });
             }
-        } else if (connection === 'open') {
-            isConnected = true;
-            latestQR = null;
-            pairingCode = null;
-            console.log('✅ WhatsApp Bridge Connected Successfully!');
-            if (sock.user) {
-                console.log(`👤 Logged in as: ${sock.user.name || sock.user.id}`);
+            
+            if (connection === 'close') {
+                isConnected = false;
+                isConnecting = false;
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                console.log(`Connection closed (status: ${statusCode}, reason: ${lastDisconnect?.error?.message || 'unknown'}). Reconnecting: ${shouldReconnect}`);
+                
+                if (shouldReconnect) {
+                    setTimeout(() => {
+                        startBridge();
+                    }, 5000);
+                }
+            } else if (connection === 'open') {
+                isConnected = true;
+                isConnecting = false;
+                latestQR = null;
+                console.log('✅ WhatsApp Bridge Connected Successfully!');
+                if (sock.user) {
+                    console.log(`👤 Logged in as: ${sock.user.name || sock.user.id}`);
+                }
             }
-        }
-    });
+        });
 
-    let lastBotReplyText = null;
+        let lastBotReplyText = null;
 
-    sock.ev.on('messages.upsert', async (m) => {
-        for (const msg of m.messages) {
-            if (!msg.message) continue;
+        sock.ev.on('messages.upsert', async (m) => {
+            for (const msg of m.messages) {
+                if (!msg.message) continue;
 
-            const text = extractMessageText(msg.message);
-            if (!text) continue;
+                const text = extractMessageText(msg.message);
+                if (!text) continue;
 
-            const rawJid = msg.key.remoteJid;
-            if (!rawJid || rawJid === 'status@broadcast') continue;
+                const rawJid = msg.key.remoteJid;
+                if (!rawJid || rawJid === 'status@broadcast') continue;
 
-            const remoteJid = jidNormalizedUser(rawJid);
-            const isGroup = remoteJid.endsWith('@g.us');
-            const isPrivate = !isGroup;
-            const sender = msg.pushName || (msg.key.fromMe ? "Prefect (You)" : "User");
+                const remoteJid = jidNormalizedUser(rawJid);
+                const isGroup = remoteJid.endsWith('@g.us');
+                const isPrivate = !isGroup;
+                const sender = msg.pushName || (msg.key.fromMe ? "Prefect (You)" : "User");
 
-            if (msg.key.fromMe && text === lastBotReplyText) {
-                continue;
-            }
-
-            console.log(`📨 [${isPrivate ? 'PRIVATE' : 'GROUP'}: ${remoteJid}] ${sender}: ${text}`);
-
-            try {
-                const response = await axios.post(BACKEND_URL, {
-                    group_id: remoteJid,
-                    sender: sender,
-                    message: text,
-                    timestamp: msg.messageTimestamp,
-                    is_private: isPrivate
-                });
-
-                if (response.data && response.data.should_reply && response.data.reply_text) {
-                    lastBotReplyText = response.data.reply_text;
-                    const replyTarget = remoteJid;
-                    console.log(`🤖 [Sending Reply to ${replyTarget}]:\n${response.data.reply_text}\n`);
-                    await sock.sendMessage(replyTarget, { text: response.data.reply_text });
+                if (msg.key.fromMe && text === lastBotReplyText) {
+                    continue;
                 }
 
-                if (isGroup && response.data.should_alert_prefect && response.data.prefect_alert_text) {
-                    const prefectJid = sock.user ? jidNormalizedUser(sock.user.id) : null;
-                    if (prefectJid) {
-                        console.log(`🚨 [Proactive VIP Alert Dispatched to Prefect: ${prefectJid}]`);
-                        await sock.sendMessage(prefectJid, { text: response.data.prefect_alert_text });
+                console.log(`📨 [${isPrivate ? 'PRIVATE' : 'GROUP'}: ${remoteJid}] ${sender}: ${text}`);
+
+                try {
+                    const response = await axios.post(BACKEND_URL, {
+                        group_id: remoteJid,
+                        sender: sender,
+                        message: text,
+                        timestamp: msg.messageTimestamp,
+                        is_private: isPrivate
+                    });
+
+                    if (response.data && response.data.should_reply && response.data.reply_text) {
+                        lastBotReplyText = response.data.reply_text;
+                        const replyTarget = remoteJid;
+                        console.log(`🤖 [Sending Reply to ${replyTarget}]:\n${response.data.reply_text}\n`);
+                        await sock.sendMessage(replyTarget, { text: response.data.reply_text });
                     }
+
+                    if (isGroup && response.data.should_alert_prefect && response.data.prefect_alert_text) {
+                        const prefectJid = sock.user ? jidNormalizedUser(sock.user.id) : null;
+                        if (prefectJid) {
+                            console.log(`🚨 [Proactive VIP Alert Dispatched to Prefect: ${prefectJid}]`);
+                            await sock.sendMessage(prefectJid, { text: response.data.prefect_alert_text });
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to process message with backend:', err.message);
                 }
-            } catch (err) {
-                console.error('Failed to process message with backend:', err.message);
             }
-        }
-    });
+        });
+    } catch (e) {
+        isConnecting = false;
+        console.error('Error in startBridge:', e.message);
+        setTimeout(startBridge, 5000);
+    }
 }
 
 startBridge();
