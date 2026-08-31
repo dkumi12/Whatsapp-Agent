@@ -22,7 +22,6 @@ let pairingCode = null;
 let isConnected = false;
 let sockInstance = null;
 
-// Helper to extract text from any WhatsApp message type/wrapper
 function extractMessageText(message) {
     if (!message) return null;
     const m = message.ephemeralMessage?.message || 
@@ -38,28 +37,40 @@ function extractMessageText(message) {
 
 app.get('/qr', async (req, res) => {
     if (isConnected) {
-        return res.send('<h2 style="font-family:sans-serif;color:green;text-align:center;margin-top:20%;">✅ WhatsApp Bridge is Connected!</h2>');
+        return res.send(`
+            <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#57df9b;">
+                <h2 style="font-size:28px;">✅ WhatsApp Bridge is Connected 24/7!</h2>
+                <p style="color:#a9bdd3;margin-top:10px;">Your cloud agent is actively listening for cohort messages.</p>
+            </div>
+        `);
     }
     if (pairingCode) {
         return res.send(`
-            <div style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;">
+            <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#fff;">
                 <h2>WhatsApp 8-Digit Pairing Code</h2>
-                <div style="font-size:32px;letter-spacing:6px;font-weight:bold;background:#10243d;color:#5ee7f7;padding:16px 24px;border-radius:10px;border:1px solid #25425f;">
+                <div style="font-size:36px;letter-spacing:8px;font-weight:bold;background:#10243d;color:#5ee7f7;padding:18px 28px;border-radius:12px;border:1px solid #25425f;margin:20px 0;">
                     ${pairingCode}
                 </div>
-                <p style="color:#666;margin-top:15px;">Open WhatsApp &gt; Linked Devices &gt; Link with phone number instead</p>
+                <p style="color:#a9bdd3;">Open WhatsApp &gt; Linked Devices &gt; Link with phone number instead</p>
             </div>
         `);
     }
     if (!latestQR) {
-        return res.send('<h2 style="font-family:sans-serif;text-align:center;margin-top:20%;">⏳ Generating QR Code, refresh in 3 seconds...</h2>');
+        return res.send(`
+            <head><meta http-equiv="refresh" content="3"></head>
+            <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#eef6ff;">
+                <h2>⏳ Generating WhatsApp QR Code...</h2>
+                <p style="color:#a9bdd3;margin-top:8px;">Auto-refreshing in 3 seconds...</p>
+            </div>
+        `);
     }
     const qrImage = await qrcode.toDataURL(latestQR);
     res.send(`
-        <div style="font-family:sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;">
-            <h2>Scan with WhatsApp (Linked Devices)</h2>
-            <img src="${qrImage}" style="width:280px;height:280px;border:1px solid #ccc;border-radius:12px;padding:10px;"/>
-            <p style="color:#666;">Open WhatsApp &gt; Linked Devices &gt; Link a Device</p>
+        <head><meta http-equiv="refresh" content="20"></head>
+        <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#eef6ff;">
+            <h2 style="color:#5ee7f7;margin-bottom:15px;">Scan with WhatsApp to Link Cloud Bridge</h2>
+            <img src="${qrImage}" style="width:280px;height:280px;background:#fff;border-radius:14px;padding:12px;box-shadow:0 10px 25px rgba(0,0,0,0.5);"/>
+            <p style="color:#a9bdd3;margin-top:15px;">Open WhatsApp &gt; Linked Devices &gt; Link a Device</p>
         </div>
     `);
 });
@@ -107,22 +118,21 @@ app.get('/groups', async (req, res) => {
 
 app.listen(QR_PORT, () => {
     console.log(`🌐 QR Web Page: http://localhost:${QR_PORT}/qr`);
-    console.log(`📋 Group List Web Page: http://localhost:${QR_PORT}/groups`);
 });
 
 async function startBridge() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-    console.log(`📱 Using WA Web version v${version.join('.')}, isLatest: ${isLatest}`);
-
+    
+    // Use stable browser signature for Linux cloud VMs
     const sock = makeWASocket({
-        version,
         auth: state,
         logger: pino({ level: 'silent' }),
-        printQRInTerminal: !PHONE_NUMBER,
-        browser: Browsers.windows('Desktop'),
-        syncFullHistory: false,
-        generateHighQualityLinkPreview: true
+        printQRInTerminal: true,
+        browser: Browsers.ubuntu('Chrome'),
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 0,
+        keepAliveIntervalMs: 10000,
+        syncFullHistory: false
     });
 
     sockInstance = sock;
@@ -142,17 +152,20 @@ async function startBridge() {
 
     sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect, qr } = update;
+        
         if (qr) {
             latestQR = qr;
+            console.log('📱 Fresh QR code generated!');
             qrcodeTerminal.generate(qr, { small: true });
         }
+        
         if (connection === 'close') {
             isConnected = false;
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-            console.log(`Connection closed (status: ${statusCode}). Reconnecting: ${shouldReconnect}`);
+            console.log(`Connection closed (status: ${statusCode}). Reconnecting in 5s: ${shouldReconnect}`);
             if (shouldReconnect) {
-                setTimeout(startBridge, 3000);
+                setTimeout(startBridge, 5000);
             }
         } else if (connection === 'open') {
             isConnected = true;
@@ -177,13 +190,11 @@ async function startBridge() {
             const rawJid = msg.key.remoteJid;
             if (!rawJid || rawJid === 'status@broadcast') continue;
 
-            // Normalized JID
             const remoteJid = jidNormalizedUser(rawJid);
             const isGroup = remoteJid.endsWith('@g.us');
             const isPrivate = !isGroup;
             const sender = msg.pushName || (msg.key.fromMe ? "Prefect (You)" : "User");
 
-            // Ignore our own bot reply loop
             if (msg.key.fromMe && text === lastBotReplyText) {
                 continue;
             }
@@ -199,7 +210,6 @@ async function startBridge() {
                     is_private: isPrivate
                 });
 
-                // 1. Reply to chat if requested
                 if (response.data && response.data.should_reply && response.data.reply_text) {
                     lastBotReplyText = response.data.reply_text;
                     const replyTarget = remoteJid;
@@ -207,7 +217,6 @@ async function startBridge() {
                     await sock.sendMessage(replyTarget, { text: response.data.reply_text });
                 }
 
-                // 2. Proactive VIP Alert to Prefect's Private Chat
                 if (isGroup && response.data.should_alert_prefect && response.data.prefect_alert_text) {
                     const prefectJid = sock.user ? jidNormalizedUser(sock.user.id) : null;
                     if (prefectJid) {
