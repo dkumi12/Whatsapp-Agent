@@ -30,14 +30,14 @@ jobs:
           pip install -r requirements.txt
       - name: Run Pytest
         env:
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'sk-or-test-key-placeholder' }}
         run: |
           pytest tests/ -v
 
   deploy:
     name: Build & Deploy to Cloud Run
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && secrets.GCP_SA_KEY != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
