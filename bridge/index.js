@@ -119,12 +119,14 @@ async function startBridge() {
 
     try {
         const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+        const { version } = await fetchLatestBaileysVersion();
         
         sock = makeWASocket({
+            version,
             auth: state,
             logger: pino({ level: 'silent' }),
             printQRInTerminal: true,
-            browser: Browsers.ubuntu('Chrome'),
+            browser: Browsers.macOS('Desktop'),
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 0,
             keepAliveIntervalMs: 10000,
