@@ -109,8 +109,18 @@ def router_node(state: CopilotState):
             answer = llm.invoke(combined_prompt).content
             return {"draft_response": answer, "should_reply": True, "should_alert_prefect": False}
 
-    # 2. Strict Group Whitelist Check (Ignore all personal / unwhitelisted groups)
+    # 2. Strict Whitelist & Privacy Check
     if is_group and not resolve_cohort_tag(group_id):
+        # Ignore unwhitelisted groups
+        return {
+            "classification": None,
+            "should_reply": False,
+            "should_alert_prefect": False,
+            "prefect_alert_text": None
+        }
+        
+    if not is_group and not msg.startswith(("/", "!")):
+        # Ignore regular private messages (don't archive them or auto-reply!)
         return {
             "classification": None,
             "should_reply": False,

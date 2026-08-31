@@ -192,6 +192,11 @@ async function startBridge() {
                     continue;
                 }
 
+                // Privacy Shield: Ignore regular private DMs unless they explicitly start with a command
+                if (isPrivate && !text.startsWith('/') && !text.startsWith('!')) {
+                    continue;
+                }
+
                 const sender = msg.pushName || (msg.key.fromMe ? "Prefect (You)" : "User");
 
                 if (msg.key.fromMe && text === lastBotReplyText) {
