@@ -182,13 +182,23 @@ async function startBridge() {
                 const remoteJid = jidNormalizedUser(rawJid);
                 const isGroup = remoteJid.endsWith('@g.us');
                 const isPrivate = !isGroup;
+
+                // Strict Whitelist: Only process official cohort groups for group events
+                const allowedGroups = [
+                    process.env.COHORT_1_GROUP_ID || '120363428812662381@g.us',
+                    process.env.COHORT_2_GROUP_ID || '120363406407748018@g.us'
+                ];
+                if (isGroup && !allowedGroups.includes(remoteJid)) {
+                    continue;
+                }
+
                 const sender = msg.pushName || (msg.key.fromMe ? "Prefect (You)" : "User");
 
                 if (msg.key.fromMe && text === lastBotReplyText) {
                     continue;
                 }
 
-                console.log(`📨 [${isPrivate ? 'PRIVATE' : 'GROUP'}: ${remoteJid}] ${sender}: ${text}`);
+                console.log(`📨 [${isPrivate ? 'PRIVATE' : 'COHORT'}: ${remoteJid}] ${sender}: ${text}`);
 
                 try {
                     const response = await axios.post(BACKEND_URL, {

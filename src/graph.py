@@ -1,3 +1,4 @@
+import os
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from src.schemas import MessageClassification
@@ -23,17 +24,20 @@ class CopilotState(TypedDict):
 llm = get_llm()
 classifier_llm = llm.with_structured_output(MessageClassification)
 
-def resolve_cohort_tag(group_id: str) -> str:
-    if settings.COHORT_1_GROUP_ID and group_id == settings.COHORT_1_GROUP_ID:
+def resolve_cohort_tag(group_id: str) -> Optional[str]:
+    c1 = os.getenv("COHORT_1_GROUP_ID") or settings.COHORT_1_GROUP_ID or "120363428812662381@g.us"
+    c2 = os.getenv("COHORT_2_GROUP_ID") or settings.COHORT_2_GROUP_ID or "120363406407748018@g.us"
+    if c1 and group_id == c1:
         return "Cohort 1"
-    elif settings.COHORT_2_GROUP_ID and group_id == settings.COHORT_2_GROUP_ID:
+    elif c2 and group_id == c2:
         return "Cohort 2"
-    return "Cohort Group"
+    return None
 
 def router_node(state: CopilotState):
     msg = state["raw_message"].strip()
     group_id = state.get("group_id", "")
-    cohort_tag = resolve_cohort_tag(group_id)
+    is_group = group_id.endswith("@g.us")
+    cohort_tag = resolve_cohort_tag(group_id) or "Cohort Group"
     
     # 1. Prefect Direct Command Check (starts with / or !)
     if msg.startswith(("/", "!")):
@@ -100,12 +104,21 @@ def router_node(state: CopilotState):
             
             Question: {args}
             
-            Provide a helpful, concise answer with timestamp citations if relevant.
+            Provide a helpful, concise answer citing timestamps if available.
             """
             answer = llm.invoke(combined_prompt).content
             return {"draft_response": answer, "should_reply": True, "should_alert_prefect": False}
 
-    # 2. General Cohort Message Processing & Archiving
+    # 2. Strict Group Whitelist Check (Ignore all personal / unwhitelisted groups)
+    if is_group and not resolve_cohort_tag(group_id):
+        return {
+            "classification": None,
+            "should_reply": False,
+            "should_alert_prefect": False,
+            "prefect_alert_text": None
+        }
+
+    # 3. Whitelisted Cohort Message Processing & Archiving
     classify_prompt = f"""
     Classify this cohort chat message from '{state['sender']}':
     "{msg}"
