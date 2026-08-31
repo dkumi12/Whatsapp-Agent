@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-cloud-bridge",
+  "version": "1.0.0",
+  "description": "Free Baileys WhatsApp Web Bridge with QR Web View",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "axios": "^1.6.8",
+    "express": "^4.19.2",
+    "pino": "^8.20.0",
+    "qrcode": "^1.5.3",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

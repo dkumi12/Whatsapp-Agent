@@ -1,0 +1,31 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+
+# Node.js (WhatsApp Bridge)
+bridge/node_modules/
+bridge/auth_info_baileys/
+npm-debug.log*
+
+# Environment & Secrets (NEVER COMMIT API KEYS)
+.env
+.env.local
+*.key
+*.json
+!bridge/package.json
+
+# ChromaDB Data Storage
+data/
+*.sqlite3
+*.db
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
