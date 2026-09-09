@@ -132,6 +132,8 @@ def router_node(state: CopilotState):
     classify_prompt = f"""
     Classify this cohort chat message from '{state['sender']}':
     "{msg}"
+    
+    If the message contains a YouTube link or tutorial link shared by an instructor/admin as a resource, categorize it as COURSE_MATERIAL and extract the URL into `extracted_url`.
     """
     classification = classifier_llm.invoke(classify_prompt)
     
@@ -145,6 +147,28 @@ def router_node(state: CopilotState):
         summary=classification.summary,
         deadline=classification.extracted_deadline or ""
     )
+
+    # 4. Autonomous Material Ingestion
+    if classification.category == "COURSE_MATERIAL" and classification.extracted_url:
+        url = classification.extracted_url
+        if "youtu" in url:
+            try:
+                from src.youtube_ingestion import fetch_and_structure_transcript
+                from src.vector_store import add_lesson_to_kb
+                
+                doc = fetch_and_structure_transcript(url, title=f"Auto-Ingested Lecture: {state['sender']}")
+                add_lesson_to_kb(doc, cohort_tag=cohort_tag)
+                
+                return {
+                    "classification": classification,
+                    "draft_response": f"🧠 *Auto-Learning Complete!*\n\nI detected a new lecture shared by {state['sender']} and have successfully ingested its contents ({len(doc.chunks)} topic chunks).\n\nI am now ready to answer student questions on this material!",
+                    "should_reply": True,
+                    "should_alert_prefect": True,
+                    "prefect_alert_text": f"🚨 *[VIP ALERT: New Material Auto-Ingested in {cohort_tag}]*\n🔗 {url}\n✅ Added {len(doc.chunks)} chunks to Knowledge Base."
+                }
+            except Exception as e:
+                # Silently fail or alert prefect if ingestion fails
+                pass
     
     # Check for VIP Proactive Alert (Announcements & Deadlines)
     is_vip = classification.category in ["ANNOUNCEMENT", "ASSIGNMENT_DEADLINE"] or classification.is_urgent

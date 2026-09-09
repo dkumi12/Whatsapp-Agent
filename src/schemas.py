@@ -2,12 +2,13 @@ from typing import List, Optional, Literal
 from pydantic import BaseModel, Field
 
 class MessageClassification(BaseModel):
-    category: Literal["ANNOUNCEMENT", "ASSIGNMENT_DEADLINE", "STUDENT_QUESTION", "CHITCHAT", "RESOURCE_SHARE"] = Field(
+    category: Literal["ANNOUNCEMENT", "ASSIGNMENT_DEADLINE", "STUDENT_QUESTION", "CHITCHAT", "COURSE_MATERIAL"] = Field(
         description="Categorization of incoming cohort chat message"
     )
     is_urgent: bool = Field(description="True if prefect or students need immediate awareness")
     summary: str = Field(description="One-sentence summary of the message")
     extracted_deadline: Optional[str] = Field(None, description="Due date or time if mentioned")
+    extracted_url: Optional[str] = Field(None, description="Extract any YouTube or web URLs shared in the message")
     topics: List[str] = Field(default_factory=list, description="Key topics, tools, or concepts mentioned")
 
 class LessonTopicChunk(BaseModel):
