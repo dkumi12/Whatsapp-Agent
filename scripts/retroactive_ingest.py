@@ -2,6 +2,9 @@ import os
 import sys
 import re
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.vector_store import get_all_chat_messages, get_all_lesson_video_urls, add_lesson_to_kb
