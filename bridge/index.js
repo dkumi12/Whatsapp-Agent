@@ -8,7 +8,8 @@ const {
     DisconnectReason, 
     fetchLatestBaileysVersion, 
     Browsers,
-    jidNormalizedUser
+    jidNormalizedUser,
+    downloadMediaMessage
 } = require('@whiskeysockets/baileys');
 const axios = require('axios');
 const qrcodeTerminal = require('qrcode-terminal');
@@ -34,6 +35,8 @@ function extractMessageText(message) {
            m.extendedTextMessage?.text || 
            m.imageMessage?.caption || 
            m.videoMessage?.caption || 
+           m.documentMessage?.caption ||
+           m.documentWithCaptionMessage?.message?.documentMessage?.caption ||
            null;
 }
 
@@ -173,8 +176,9 @@ async function startBridge() {
             for (const msg of m.messages) {
                 if (!msg.message) continue;
 
-                const text = extractMessageText(msg.message);
-                if (!text) continue;
+                const text = extractMessageText(msg.message) || "";
+                const hasDocument = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage?.message?.documentMessage);
+                if (!text && !hasDocument) continue;
 
                 const rawJid = msg.key.remoteJid;
                 if (!rawJid || rawJid === 'status@broadcast') continue;
@@ -192,8 +196,8 @@ async function startBridge() {
                     continue;
                 }
 
-                // Privacy Shield: Ignore regular private DMs unless they explicitly start with a command
-                if (isPrivate && !text.startsWith('/') && !text.startsWith('!')) {
+                // Privacy Shield: Ignore regular private DMs unless they explicitly start with a command or upload a document
+                if (isPrivate && !text.startsWith('/') && !text.startsWith('!') && !hasDocument) {
                     continue;
                 }
 
@@ -205,13 +209,44 @@ async function startBridge() {
 
                 console.log(`📨 [${isPrivate ? 'PRIVATE' : 'COHORT'}: ${remoteJid}] ${sender}: ${text}`);
 
+                let file_name = null;
+                let mime_type = null;
+                let file_data = null; // Base64
+                
+                try {
+                    const docMessage = msg.message?.documentMessage || msg.message?.documentWithCaptionMessage?.message?.documentMessage;
+                    if (docMessage && docMessage.mimetype === 'application/pdf') {
+                        // For safety, only download if it's explicitly meant to be learned or it's a PDF.
+                        // We will just let the backend handle the caption logic.
+                        console.log(`📥 [Downloading PDF from ${sender}...]`);
+                        const buffer = await downloadMediaMessage(
+                            msg,
+                            'buffer',
+                            {},
+                            { 
+                                logger: pino({ level: 'silent' }),
+                                reuploadRequest: sock.updateMediaMessage
+                            }
+                        );
+                        file_name = docMessage.fileName || "document.pdf";
+                        mime_type = docMessage.mimetype;
+                        file_data = buffer.toString('base64');
+                        console.log(`✅ [Downloaded ${file_name} successfully]`);
+                    }
+                } catch (e) {
+                    console.error("Error downloading media:", e.message);
+                }
+
                 try {
                     const response = await axios.post(BACKEND_URL, {
                         group_id: remoteJid,
                         sender: sender,
-                        message: text,
+                        message: text || "", // ensure we don't send null
                         timestamp: msg.messageTimestamp,
-                        is_private: isPrivate
+                        is_private: isPrivate,
+                        file_name: file_name,
+                        mime_type: mime_type,
+                        file_data: file_data
                     });
 
                     if (response.data && response.data.should_reply && response.data.reply_text) {

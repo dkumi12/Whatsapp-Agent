@@ -14,6 +14,9 @@ class CopilotState(TypedDict):
     sender: str
     group_id: str
     raw_message: str
+    file_name: Optional[str]
+    mime_type: Optional[str]
+    file_data: Optional[str]
     classification: Optional[MessageClassification]
     retrieved_context: Optional[str]
     draft_response: Optional[str]
@@ -149,6 +152,31 @@ def router_node(state: CopilotState):
     )
 
     # 4. Autonomous Material Ingestion
+    
+    # 4a. Handle Base64 PDF Documents
+    if state.get("file_data") and state.get("mime_type") == "application/pdf":
+        file_name = state.get("file_name") or "uploaded_document.pdf"
+        try:
+            from src.document_ingestion import ingest_base64_pdf
+            chunk_count = ingest_base64_pdf(state["file_data"], file_name, cohort_tag)
+            
+            return {
+                "classification": classification,
+                "draft_response": f"📄 *Document Learned!*\n\nI just ingested the PDF '{file_name}' and extracted {chunk_count} paragraphs into my knowledge base. I'm ready to answer questions about it!",
+                "should_reply": True,
+                "should_alert_prefect": True,
+                "prefect_alert_text": f"🚨 *[VIP ALERT: PDF Auto-Ingested in {cohort_tag}]*\n📄 {file_name}\n✅ Added {chunk_count} chunks to Knowledge Base."
+            }
+        except Exception as e:
+            return {
+                "classification": classification,
+                "draft_response": f"⚠️ *Error reading PDF:* {e}",
+                "should_reply": True,
+                "should_alert_prefect": False,
+                "prefect_alert_text": None
+            }
+
+    # 4b. Handle YouTube Links
     if classification.category == "COURSE_MATERIAL" and classification.extracted_url:
         url = classification.extracted_url
         if "youtu" in url:

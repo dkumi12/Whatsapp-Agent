@@ -30,3 +30,6 @@ class WhatsAppWebhookPayload(BaseModel):
     message: str
     timestamp: Optional[int] = None
     is_private: Optional[bool] = False
+    file_name: Optional[str] = None
+    mime_type: Optional[str] = None
+    file_data: Optional[str] = None
