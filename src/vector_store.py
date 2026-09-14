@@ -73,8 +73,11 @@ def query_kb(query_text: str, cohort_tag: Optional[str] = None, n_results: int =
     
     return "\n\n".join(context_chunks)
 
+import time
+
 def add_chat_message_to_archive(sender: str, message: str, group_id: str, cohort_tag: str = "Cohort 1", category: str = "GENERAL", summary: str = "", deadline: str = ""):
-    doc_id = str(uuid.uuid4())
+    ts_ms = int(time.time() * 1000)
+    doc_id = f"live_{ts_ms}_{uuid.uuid4().hex[:8]}"
     content = f"[{cohort_tag}] From {sender} ({category}): {message}"
     if summary:
         content += f"\nSummary: {summary}"
@@ -90,7 +93,8 @@ def add_chat_message_to_archive(sender: str, message: str, group_id: str, cohort
             "cohort_tag": cohort_tag,
             "category": category,
             "deadline": deadline or "",
-            "summary": summary or ""
+            "summary": summary or "",
+            "timestamp_ms": ts_ms
         }]
     )
 
@@ -105,30 +109,39 @@ def query_chat_archive(query_text: str, cohort_tag: Optional[str] = None, n_resu
         chat_results.append(f"• [{meta.get('cohort_tag', 'Cohort')}] {doc}")
     return "\n\n".join(chat_results)
 
-def get_recent_catchup_context(cohort_tag: Optional[str] = None, n_results: int = 25) -> str:
+def get_recent_catchup_context(cohort_tag: Optional[str] = None, n_results: int = 30) -> str:
     if chat_collection.count() == 0:
-        return "No chat history has been ingested yet. Please upload your WhatsApp chat export on the dashboard."
-    
-    search_queries = ["announcement deadline assignment project homework submission schedule link recording test"]
-    where_filter = {"cohort_tag": cohort_tag} if cohort_tag else None
-    
-    results = chat_collection.query(
-        query_texts=search_queries, 
-        n_results=min(n_results, chat_collection.count()),
-        where=where_filter
-    )
-    
-    matched_docs = []
-    if results and results['documents'] and results['documents'][0]:
-        matched_docs.extend(results['documents'][0])
+        return "No chat history has been ingested yet."
         
-    recent = chat_collection.get(limit=15)
-    if recent and recent['documents']:
-        for d in recent['documents']:
-            if d not in matched_docs:
-                matched_docs.append(d)
-                
-    return "\n\n".join(matched_docs[:n_results])
+    all_data = chat_collection.get(include=["metadatas", "documents"])
+    docs = all_data.get("documents", [])
+    metas = all_data.get("metadatas", [])
+    
+    live_docs = []
+    # ChromaDB get() typically returns in insertion order. 
+    # By reversing, we scan from the newest intercepted messages backwards.
+    for d, m in zip(reversed(docs), reversed(metas)):
+        if not d or not m: continue
+        
+        # Filter by cohort if specified
+        if cohort_tag and m.get("cohort_tag") != cohort_tag:
+            continue
+            
+        # Skip the old static history dump for daily catchups
+        if m.get("category") == "HISTORICAL_CHAT":
+            continue
+            
+        live_docs.append(d)
+        if len(live_docs) >= n_results:
+            break
+            
+    # Reverse back to chronological order (oldest first among the recent batch)
+    live_docs.reverse()
+    
+    if not live_docs:
+        return "No recent live activity recorded yet for this cohort."
+        
+    return "\n\n".join(live_docs)
 
 def ingest_whatsapp_chat_export_text(raw_text: str, cohort_tag: str = "Cohort 1", group_id: str = "cohort_history") -> int:
     pattern = r'(?:\[?(\d{1,2}[\/\.-]\d{1,2}[\/\.-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[APap][Mm])?)\]?)\s*(?:- )?([^:]+):\s*(.+)'
