@@ -9,7 +9,7 @@ load_dotenv(override=True)
 class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_MODEL: str = "google/gemini-2.5-flash"
-    CHROMA_PERSIST_DIR: str = "./data/chroma_db"
+    DATABASE_URL: str = ""
     COHORT_1_GROUP_ID: str = ""
     COHORT_2_GROUP_ID: str = ""
     FASTAPI_HOST: str = "0.0.0.0"

@@ -5,13 +5,13 @@ from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from src.schemas import WhatsAppWebhookPayload, LessonKnowledgeDoc
-from src.graph import copilot_graph
+from src.graph import copilot_graph, resolve_cohort_tag
 from src.youtube_ingestion import fetch_and_structure_transcript
 from src.vector_store import (
-    add_lesson_to_kb, 
-    query_kb, 
-    lesson_collection, 
-    chat_collection, 
+    add_lesson_to_kb,
+    query_kb,
+    lesson_count as get_lesson_count,
+    chat_count as get_chat_count,
     ingest_whatsapp_chat_export_text,
     query_chat_archive,
     get_recent_catchup_context,
@@ -29,13 +29,11 @@ def health_check():
 
 @app.get("/api/stats")
 def get_stats():
-    kb_count = lesson_collection.count() if lesson_collection else 0
-    chat_count = chat_collection.count() if chat_collection else 0
     lessons = get_all_ingested_lessons()
     return {
         "messages_count": len(message_history),
-        "kb_chunks_count": kb_count,
-        "chat_archived_count": chat_count,
+        "kb_chunks_count": get_lesson_count(),
+        "chat_archived_count": get_chat_count(),
         "lessons_count": len(lessons),
         "recent_messages": message_history[-20:],
         "ingested_lessons": lessons
@@ -92,9 +90,11 @@ async def handle_whatsapp_message(payload: WhatsAppWebhookPayload):
     result = copilot_graph.invoke(state_input)
     
     classification_data = result["classification"].dict() if result.get("classification") else {}
+    cohort_tag = resolve_cohort_tag(payload.group_id) or ("Direct Command" if payload.is_private else "Unresolved")
     record = {
         "sender": payload.sender,
         "group_id": payload.group_id,
+        "cohort_tag": cohort_tag,
         "message": payload.message,
         "category": classification_data.get("category", "DIRECT_COMMAND" if payload.is_private else "UNKNOWN"),
         "summary": classification_data.get("summary", ""),
@@ -169,8 +169,8 @@ def test_query(q: str, cohort: Optional[str] = None):
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard_ui():
-    kb_count = lesson_collection.count() if lesson_collection else 0
-    chat_count = chat_collection.count() if chat_collection else 0
+    kb_count = get_lesson_count()
+    chat_count = get_chat_count()
     lessons = get_all_ingested_lessons()
     return f"""
     <!DOCTYPE html>
@@ -485,7 +485,10 @@ def dashboard_ui():
                             <div class="feed-item">
                                 <div class="feed-header">
                                     <span class="sender">${{m.sender}} ${{m.is_private ? '<span style="color:#57df9b;">(Private DM)</span>' : ''}}</span>
-                                    <span class="category-tag cat-${{m.category}}">${{m.category}}</span>
+                                    <span>
+                                        <span class="category-tag" style="background:#1c2e42;color:var(--cyan);margin-right:6px;">${{m.cohort_tag || 'Unresolved'}}</span>
+                                        <span class="category-tag cat-${{m.category}}">${{m.category}}</span>
+                                    </span>
                                 </div>
                                 <div style="font-size:14px;margin-bottom:6px;">"${{m.message}}"</div>
                                 ${{m.summary ? `<div style="font-size:12px;color:#a9bdd3;"><strong>Summary:</strong> ${{m.summary}}</div>` : ''}}

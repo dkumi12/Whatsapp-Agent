@@ -1,4 +1,5 @@
 import os
+import re
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph, END
 from src.schemas import MessageClassification
@@ -48,11 +49,16 @@ def router_node(state: CopilotState):
         cmd = parts[0].lower()
         args = " ".join(parts[1:]) if len(parts) > 1 else ""
         
+        # Only treat an explicit "cohort 1/2" (or "c1"/"c2") token as a cohort
+        # selector, and strip it out of args so it doesn't pollute search/ask
+        # queries. A bare digit anywhere in the args (e.g. "O(1)", "chapter 2")
+        # must NOT be misread as a cohort filter.
         target_cohort = None
-        if "1" in args:
-            target_cohort = "Cohort 1"
-        elif "2" in args:
-            target_cohort = "Cohort 2"
+        cohort_match = re.search(r'\bcohort\s*([12])\b|\bc([12])\b', args, re.IGNORECASE)
+        if cohort_match:
+            digit = cohort_match.group(1) or cohort_match.group(2)
+            target_cohort = f"Cohort {digit}"
+            args = (args[:cohort_match.start()] + args[cohort_match.end():]).strip()
             
         if cmd in ["/catchup", "!catchup", "/digest", "!digest"]:
             context = get_recent_catchup_context(cohort_tag=target_cohort, n_results=30)

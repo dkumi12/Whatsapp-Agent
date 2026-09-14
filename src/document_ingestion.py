@@ -4,12 +4,12 @@ import tempfile
 import uuid
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from src.vector_store import lesson_collection
+from src.vector_store import add_raw_chunks_to_kb
 
 def ingest_base64_pdf(base64_data: str, file_name: str, cohort_tag: str) -> int:
     """
     Decodes a base64 PDF, extracts text using PyPDFLoader, chunks it,
-    and upserts into the ChromaDB lesson_collection.
+    and upserts into the lesson_chunks table.
     Returns the number of chunks ingested.
     """
     pdf_bytes = base64.b64decode(base64_data)
@@ -25,27 +25,26 @@ def ingest_base64_pdf(base64_data: str, file_name: str, cohort_tag: str) -> int:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
         chunks = text_splitter.split_documents(pages)
         
-        docs = []
-        metas = []
-        ids = []
-        for i, chunk in enumerate(chunks):
+        raw_chunks = []
+        for chunk in chunks:
             # We prefix the chunk text with the document name for context
             page_num = chunk.metadata.get('page', 0) + 1
-            docs.append(f"[Document: {file_name} | Page {page_num}]\n{chunk.page_content}")
-            
-            metas.append({
-                "video_id": f"doc_{uuid.uuid4().hex[:8]}", # re-using the video metadata schema format
+            content = f"[Document: {file_name} | Page {page_num}]\n{chunk.page_content}"
+
+            raw_chunks.append({
+                "id": str(uuid.uuid4()),
+                "video_id": f"doc_{uuid.uuid4().hex[:8]}",  # re-using the lesson schema format
                 "video_title": file_name,
                 "video_url": "whatsapp_document_upload",
+                "timestamp": None,
+                "deep_link": None,
                 "cohort_tag": cohort_tag,
-                "topic": f"Document: {file_name}"
+                "topic": f"Document: {file_name}",
+                "content": content
             })
-            ids.append(str(uuid.uuid4()))
-            
-        if docs:
-            lesson_collection.upsert(documents=docs, metadatas=metas, ids=ids)
-            
-        return len(docs)
+
+        add_raw_chunks_to_kb(raw_chunks)
+        return len(raw_chunks)
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)

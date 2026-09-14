@@ -71,4 +71,7 @@ jobs:
           env_vars: |
             OPENROUTER_API_KEY=${{ secrets.OPENROUTER_API_KEY }}
             OPENROUTER_MODEL=google/gemini-2.5-flash
+            COHORT_1_GROUP_ID=${{ secrets.COHORT_1_GROUP_ID }}
+            COHORT_2_GROUP_ID=${{ secrets.COHORT_2_GROUP_ID }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
           flags: '--allow-unauthenticated --min-instances=0 --memory=512Mi --cpu=1'

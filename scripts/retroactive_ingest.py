@@ -4,43 +4,33 @@ import re
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.vector_store import chat_collection, lesson_collection, add_lesson_to_kb
+from src.vector_store import get_all_chat_messages, get_all_lesson_video_urls, add_lesson_to_kb
 from src.youtube_ingestion import fetch_and_structure_transcript
 
-def get_already_ingested_urls():
-    """Fetch all URLs that are already in the knowledge base."""
-    results = lesson_collection.get(include=["metadatas"])
-    ingested_urls = set()
-    for meta in results.get("metadatas", []):
-        if meta and "video_url" in meta:
-            ingested_urls.add(meta["video_url"])
-    return ingested_urls
-
 def scan_and_ingest():
-    print("🔍 Scanning ChromaDB Chat Archive for YouTube links...")
-    
+    print("🔍 Scanning Postgres Chat Archive for YouTube links...")
+
     # 1. Fetch all chat messages
-    chat_results = chat_collection.get(include=["documents", "metadatas"])
-    documents = chat_results.get("documents", [])
-    metadatas = chat_results.get("metadatas", [])
-    
+    chat_messages = get_all_chat_messages()
+
     # 2. Extract URLs using Regex
     # Matches standard youtube.com and youtu.be links
     youtube_regex = r'(https?://(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)[\w-]+)'
-    
+
     found_links = {} # url -> cohort_tag
-    for doc, meta in zip(documents, metadatas):
+    for row in chat_messages:
+        doc = row.get("content")
         if not doc:
             continue
         matches = re.findall(youtube_regex, doc)
         for match in matches:
-            cohort_tag = meta.get("cohort_tag", "Cohort Group") if meta else "Cohort Group"
+            cohort_tag = row.get("cohort_tag") or "Cohort Group"
             found_links[match] = cohort_tag
-            
+
     print(f"✅ Found {len(found_links)} unique YouTube links in chat history.")
-    
+
     # 3. Filter out already ingested
-    ingested_urls = get_already_ingested_urls()
+    ingested_urls = get_all_lesson_video_urls()
     
     # Normalize URLs for comparison (sometimes they have trailing slashes or differing formats, but regex catches base)
     new_links = {url: cohort for url, cohort in found_links.items() if url not in ingested_urls}
