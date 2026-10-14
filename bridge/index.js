@@ -46,6 +46,7 @@ app.get('/qr', async (req, res) => {
             <div style="font-family:Segoe UI, sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;background:#071426;color:#57df9b;">
                 <h2 style="font-size:28px;">✅ WhatsApp Bridge is Connected 24/7!</h2>
                 <p style="color:#a9bdd3;margin-top:10px;">Your cloud agent is actively listening for cohort messages.</p>
+                <p style="margin-top:20px;"><a href="/groups" style="color:#5ee7f7;text-decoration:none;font-weight:600;background:#1b2d45;padding:10px 18px;border-radius:8px;">View All Cohort Group IDs ➔</a></p>
             </div>
         `);
     }
@@ -71,7 +72,7 @@ app.get('/qr', async (req, res) => {
 
 app.get('/groups', async (req, res) => {
     if (!sock || !isConnected) {
-        return res.status(400).send('<h3>WhatsApp Bridge is not connected yet.</h3>');
+        return res.status(400).send('<h3>WhatsApp Bridge is not connected yet. Please wait 5 seconds and refresh.</h3>');
     }
     try {
         const groups = await sock.groupFetchAllParticipating();
@@ -189,8 +190,15 @@ async function startBridge() {
 
                 // Strict Whitelist: Only process official cohort groups for group events
                 const allowedGroups = [
-                    process.env.COHORT_1_GROUP_ID || '120363428812662381@g.us',
-                    process.env.COHORT_2_GROUP_ID || '120363406407748018@g.us'
+                    process.env.COHORT_1_GROUP_ID || '120363428812662381@g.us', // Cohort 1
+                    process.env.COHORT_2_GROUP_ID || '120363406407748018@g.us', // Cohort 2
+                    '120363427542055326@g.us', // AWS PRACTITIONER Cohort 2
+                    '120363430746173915@g.us', // Python with AI Cohort 2
+                    '120363411584074404@g.us', // A.I with Python for Everybody
+                    '120363415570593617@g.us', // Data Science And Analytics Free-Training
+                    '120363433400665333@g.us', // CloudWithShad Cohort 2
+                    '120363408183500853@g.us', // Cloud Practitioner - Q n A
+                    '120363426897508316@g.us'  // CloudWithShad
                 ];
                 if (isGroup && !allowedGroups.includes(remoteJid)) {
                     continue;

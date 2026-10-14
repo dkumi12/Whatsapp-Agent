@@ -28,14 +28,7 @@ class CopilotState(TypedDict):
 llm = get_llm()
 classifier_llm = llm.with_structured_output(MessageClassification)
 
-def resolve_cohort_tag(group_id: str) -> Optional[str]:
-    c1 = os.getenv("COHORT_1_GROUP_ID") or settings.COHORT_1_GROUP_ID or "120363428812662381@g.us"
-    c2 = os.getenv("COHORT_2_GROUP_ID") or settings.COHORT_2_GROUP_ID or "120363406407748018@g.us"
-    if c1 and group_id == c1:
-        return "Cohort 1"
-    elif c2 and group_id == c2:
-        return "Cohort 2"
-    return None
+from src.cohorts import resolve_cohort_tag
 
 def router_node(state: CopilotState):
     msg = state["raw_message"].strip()
@@ -59,6 +52,8 @@ def router_node(state: CopilotState):
             digit = cohort_match.group(1) or cohort_match.group(2)
             target_cohort = f"Cohort {digit}"
             args = (args[:cohort_match.start()] + args[cohort_match.end():]).strip()
+        elif is_group and cohort_tag != "Cohort Group":
+            target_cohort = cohort_tag
             
         if cmd in ["/catchup", "!catchup", "/digest", "!digest"]:
             context = get_recent_catchup_context(cohort_tag=target_cohort, n_results=30)
@@ -154,7 +149,9 @@ def router_node(state: CopilotState):
         cohort_tag=cohort_tag,
         category=classification.category,
         summary=classification.summary,
-        deadline=classification.extracted_deadline or ""
+        deadline=classification.extracted_deadline or "",
+        topics=classification.topics,
+        extracted_url=classification.extracted_url or ""
     )
 
     # 4. Autonomous Material Ingestion

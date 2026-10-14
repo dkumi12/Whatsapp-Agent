@@ -215,7 +215,17 @@ def query_kb(query_text: str, cohort_tag: Optional[str] = None, n_results: int =
     return "\n\n".join(context_chunks)
 
 
-def add_chat_message_to_archive(sender: str, message: str, group_id: str, cohort_tag: str = "Cohort 1", category: str = "GENERAL", summary: str = "", deadline: str = ""):
+def add_chat_message_to_archive(
+    sender: str,
+    message: str,
+    group_id: str,
+    cohort_tag: str = "Cohort 1",
+    category: str = "GENERAL",
+    summary: str = "",
+    deadline: str = "",
+    topics: Optional[List[str]] = None,
+    extracted_url: str = ""
+):
     ts_ms = int(time.time() * 1000)
     doc_id = f"live_{ts_ms}_{uuid.uuid4().hex[:8]}"
     content = f"[{cohort_tag}] From {sender} ({category}): {message}"
@@ -223,16 +233,25 @@ def add_chat_message_to_archive(sender: str, message: str, group_id: str, cohort
         content += f"\nSummary: {summary}"
     if deadline:
         content += f"\nDeadline: {deadline}"
+    if topics:
+        content += f"\nTopics: {', '.join(topics)}"
+    if extracted_url:
+        content += f"\nLink: {extracted_url}"
 
     embedding = _embed([content])[0]
     with _conn() as conn:
         with conn.cursor() as cur:
+            # Ensure optional telemetry columns exist gracefully
+            cur.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS topics TEXT")
+            cur.execute("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS extracted_url TEXT")
+            
+            topics_str = ", ".join(topics) if topics else ""
             cur.execute("""
                 INSERT INTO chat_messages
-                    (id, sender, group_id, cohort_tag, category, deadline, summary, timestamp_ms, content, embedding)
+                    (id, sender, group_id, cohort_tag, category, deadline, summary, timestamp_ms, content, embedding, topics, extracted_url)
                 VALUES
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (doc_id, sender, group_id, cohort_tag, category, deadline or "", summary or "", ts_ms, content, embedding))
+                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (doc_id, sender, group_id, cohort_tag, category, deadline or "", summary or "", ts_ms, content, embedding, topics_str, extracted_url or ""))
 
 
 def query_chat_archive(query_text: str, cohort_tag: Optional[str] = None, n_results: int = 8) -> str:
