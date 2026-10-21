@@ -2,6 +2,8 @@ const crypto = require('crypto');
 if (!global.crypto) global.crypto = crypto;
 if (!globalThis.crypto) globalThis.crypto = crypto;
 
+const fs = require('fs');
+const path = require('path');
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
@@ -20,10 +22,100 @@ const pino = require('pino');
 const app = express();
 const QR_PORT = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'http://127.0.0.1:8080/webhook/whatsapp';
+const QUEUE_FILE = path.join(__dirname, 'queue.jsonl');
 
 let latestQR = null;
 let isConnected = false;
 let sock = null;
+let lastBotReplyText = null;
+let isFlushingQueue = false;
+
+function enqueueOfflineMessage(payload) {
+    try {
+        const line = JSON.stringify(payload) + '\n';
+        fs.appendFileSync(QUEUE_FILE, line, 'utf8');
+        console.log(`📦 [Queued offline message from ${payload.sender} to queue.jsonl]`);
+    } catch (e) {
+        console.error('Failed to write to queue.jsonl:', e.message);
+    }
+}
+
+async function flushOfflineQueue() {
+    if (isFlushingQueue) return;
+    if (!fs.existsSync(QUEUE_FILE)) return;
+
+    try {
+        const stats = fs.statSync(QUEUE_FILE);
+        if (stats.size === 0) return;
+
+        // Verify backend is healthy before attempting flush
+        try {
+            await axios.get('http://127.0.0.1:8080/health', { timeout: 3000 });
+        } catch {
+            return; // Backend still offline; keep waiting
+        }
+
+        isFlushingQueue = true;
+        const processingFile = `${QUEUE_FILE}.processing`;
+
+        try {
+            fs.renameSync(QUEUE_FILE, processingFile);
+        } catch {
+            isFlushingQueue = false;
+            return;
+        }
+
+        const content = fs.readFileSync(processingFile, 'utf8');
+        const lines = content.split('\n').map(l => l.trim()).filter(Boolean);
+        console.log(`🔄 [Flushing ${lines.length} offline queued message(s) to backend...]`);
+
+        const failedLines = [];
+
+        for (const line of lines) {
+            try {
+                const payload = JSON.parse(line);
+                const response = await axios.post(BACKEND_URL, payload, { timeout: 15000 });
+
+                if (response.data && response.data.should_reply && response.data.reply_text) {
+                    const ageSeconds = payload.timestamp ? (Date.now() / 1000 - payload.timestamp) : 0;
+                    if (payload.is_private || ageSeconds < 600) {
+                        lastBotReplyText = response.data.reply_text;
+                        if (sock && isConnected) {
+                            await sock.sendMessage(payload.group_id, { text: response.data.reply_text });
+                        }
+                    }
+                }
+
+                if (response.data && response.data.should_alert_prefect && response.data.prefect_alert_text) {
+                    if (sock && isConnected && sock.user) {
+                        const prefectJid = jidNormalizedUser(sock.user.id);
+                        await sock.sendMessage(prefectJid, { text: response.data.prefect_alert_text });
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to replay queued message, keeping for next flush:', err.message);
+                failedLines.push(line);
+            }
+        }
+
+        try {
+            fs.unlinkSync(processingFile);
+        } catch {}
+
+        if (failedLines.length > 0) {
+            fs.appendFileSync(QUEUE_FILE, failedLines.join('\n') + '\n', 'utf8');
+        } else {
+            console.log(`✅ [All ${lines.length} queued messages successfully processed by backend]`);
+        }
+    } catch (err) {
+        console.error('Error in flushOfflineQueue:', err.message);
+    } finally {
+        isFlushingQueue = false;
+    }
+}
+
+// Background poll to replay queued messages every 15 seconds
+setInterval(flushOfflineQueue, 15000);
 
 function extractMessageText(message) {
     if (!message) return null;
@@ -171,8 +263,6 @@ async function startBridge() {
             }
         });
 
-        let lastBotReplyText = null;
-
         sock.ev.on('messages.upsert', async (m) => {
             for (const msg of m.messages) {
                 if (!msg.message) continue;
@@ -245,17 +335,19 @@ async function startBridge() {
                     console.error("Error downloading media:", e.message);
                 }
 
+                const payload = {
+                    group_id: remoteJid,
+                    sender: sender,
+                    message: text || "",
+                    timestamp: msg.messageTimestamp,
+                    is_private: isPrivate,
+                    file_name: file_name,
+                    mime_type: mime_type,
+                    file_data: file_data
+                };
+
                 try {
-                    const response = await axios.post(BACKEND_URL, {
-                        group_id: remoteJid,
-                        sender: sender,
-                        message: text || "", // ensure we don't send null
-                        timestamp: msg.messageTimestamp,
-                        is_private: isPrivate,
-                        file_name: file_name,
-                        mime_type: mime_type,
-                        file_data: file_data
-                    });
+                    const response = await axios.post(BACKEND_URL, payload, { timeout: 15000 });
 
                     if (response.data && response.data.should_reply && response.data.reply_text) {
                         lastBotReplyText = response.data.reply_text;
@@ -273,6 +365,8 @@ async function startBridge() {
                     }
                 } catch (err) {
                     console.error('Failed to process message with backend:', err.message);
+                    // Buffer message to queue.jsonl for zero-loss recovery
+                    enqueueOfflineMessage(payload);
                 }
             }
         });
