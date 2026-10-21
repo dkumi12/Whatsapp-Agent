@@ -28,7 +28,7 @@ class CopilotState(TypedDict):
 llm = get_llm()
 classifier_llm = llm.with_structured_output(MessageClassification)
 
-from src.cohorts import resolve_cohort_tag
+from src.cohorts import resolve_cohort_tag, find_matching_cohort
 
 def router_node(state: CopilotState):
     msg = state["raw_message"].strip()
@@ -42,16 +42,10 @@ def router_node(state: CopilotState):
         cmd = parts[0].lower()
         args = " ".join(parts[1:]) if len(parts) > 1 else ""
         
-        # Only treat an explicit "cohort 1/2" (or "c1"/"c2") token as a cohort
-        # selector, and strip it out of args so it doesn't pollute search/ask
-        # queries. A bare digit anywhere in the args (e.g. "O(1)", "chapter 2")
-        # must NOT be misread as a cohort filter.
         target_cohort = None
-        cohort_match = re.search(r'\bcohort\s*([12])\b|\bc([12])\b', args, re.IGNORECASE)
-        if cohort_match:
-            digit = cohort_match.group(1) or cohort_match.group(2)
-            target_cohort = f"Cohort {digit}"
-            args = (args[:cohort_match.start()] + args[cohort_match.end():]).strip()
+        matched_cohort = find_matching_cohort(args)
+        if matched_cohort:
+            target_cohort = matched_cohort
         elif is_group and cohort_tag != "Cohort Group":
             target_cohort = cohort_tag
             
