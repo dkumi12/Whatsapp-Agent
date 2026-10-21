@@ -85,7 +85,9 @@ async def handle_whatsapp_message(payload: WhatsAppWebhookPayload):
         "classification": None,
         "retrieved_context": None,
         "draft_response": None,
-        "should_reply": False
+        "should_reply": False,
+        "should_alert_prefect": False,
+        "prefect_alert_text": None
     }
     result = copilot_graph.invoke(state_input)
     

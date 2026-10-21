@@ -1,10 +1,13 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from langchain_openai import ChatOpenAI
 
-# Load .env file automatically
-load_dotenv(override=True)
+# Always locate the project root .env regardless of working directory
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_PATH = BASE_DIR / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 class Settings(BaseSettings):
     OPENROUTER_API_KEY: str = ""
@@ -16,7 +19,7 @@ class Settings(BaseSettings):
     PORT: int = 8080
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(ENV_PATH),
         env_file_encoding="utf-8",
         extra="ignore"
     )
