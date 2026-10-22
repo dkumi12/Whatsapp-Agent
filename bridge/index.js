@@ -74,14 +74,18 @@ async function flushOfflineQueue() {
         for (const line of lines) {
             try {
                 const payload = JSON.parse(line);
-                const response = await axios.post(BACKEND_URL, payload, { timeout: 15000 });
+                const response = await axios.post(BACKEND_URL, payload, { timeout: 60000 });
 
                 if (response.data && response.data.should_reply && response.data.reply_text) {
                     const ageSeconds = payload.timestamp ? (Date.now() / 1000 - payload.timestamp) : 0;
                     if (payload.is_private || ageSeconds < 600) {
                         lastBotReplyText = response.data.reply_text;
                         if (sock && isConnected) {
-                            await sock.sendMessage(payload.group_id, { text: response.data.reply_text });
+                            let targetJid = payload.group_id;
+                            if (payload.is_private && (targetJid.endsWith('@lid') || targetJid.includes('@lid'))) {
+                                targetJid = sock.user ? jidNormalizedUser(sock.user.id) : targetJid;
+                            }
+                            await sock.sendMessage(targetJid, { text: response.data.reply_text });
                         }
                     }
                 }
@@ -347,11 +351,14 @@ async function startBridge() {
                 };
 
                 try {
-                    const response = await axios.post(BACKEND_URL, payload, { timeout: 15000 });
+                    const response = await axios.post(BACKEND_URL, payload, { timeout: 60000 });
 
                     if (response.data && response.data.should_reply && response.data.reply_text) {
                         lastBotReplyText = response.data.reply_text;
-                        const replyTarget = remoteJid;
+                        let replyTarget = remoteJid;
+                        if (isPrivate && (remoteJid.endsWith('@lid') || msg.key.fromMe)) {
+                            replyTarget = sock.user ? jidNormalizedUser(sock.user.id) : remoteJid;
+                        }
                         console.log(`🤖 [Sending Reply to ${replyTarget}]:\n${response.data.reply_text}\n`);
                         await sock.sendMessage(replyTarget, { text: response.data.reply_text });
                     }
