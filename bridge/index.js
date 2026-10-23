@@ -91,8 +91,8 @@ async function flushOfflineQueue() {
                 }
 
                 if (response.data && response.data.should_alert_prefect && response.data.prefect_alert_text) {
-                    if (sock && isConnected && sock.user) {
-                        const prefectJid = jidNormalizedUser(sock.user.id);
+                    if (sock && isConnected) {
+                        const prefectJid = process.env.PREFECT_JID || jidNormalizedUser(sock.user.id);
                         await sock.sendMessage(prefectJid, { text: response.data.prefect_alert_text });
                     }
                 }
@@ -364,7 +364,7 @@ async function startBridge() {
                     }
 
                     if (isGroup && response.data.should_alert_prefect && response.data.prefect_alert_text) {
-                        const prefectJid = sock.user ? jidNormalizedUser(sock.user.id) : null;
+                        const prefectJid = process.env.PREFECT_JID || (sock.user ? jidNormalizedUser(sock.user.id) : null);
                         if (prefectJid) {
                             console.log(`🚨 [Proactive VIP Alert Dispatched to Prefect: ${prefectJid}]`);
                             await sock.sendMessage(prefectJid, { text: response.data.prefect_alert_text });
