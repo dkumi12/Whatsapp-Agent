@@ -11,13 +11,26 @@ BRIDGE_JS = Path("bridge/index.js").read_text(encoding="utf-8")
 
 
 def test_axios_timeout_is_sufficient():
-    """All Axios timeouts must be >= 30,000ms (30s) to handle slow RAG responses."""
-    timeouts = [int(m) for m in re.findall(r"timeout:\s*(\d+)", BRIDGE_JS)]
-    assert timeouts, "No Axios timeout found in bridge/index.js — add { timeout: 60000 }"
-    low = [t for t in timeouts if t < 30000]
+    """
+    axios.post timeouts (message processing) must be >= 30,000ms.
+    The axios.get health-check probe (3000ms) is intentionally short and excluded.
+    """
+    # Extract only axios.post call timeouts — health probe GET is allowed to be short
+    post_timeouts = [
+        int(m)
+        for m in re.findall(
+            r"axios\.post\([^)]*timeout:\s*(\d+)", BRIDGE_JS, re.DOTALL
+        )
+    ]
+    assert post_timeouts, (
+        "No axios.post timeout found in bridge/index.js — "
+        "add { timeout: 60000 } to all axios.post() calls."
+    )
+    low = [t for t in post_timeouts if t < 30000]
     assert not low, (
-        f"Axios timeout(s) too short: {low}ms — minimum is 30,000ms (30s). "
-        "Gemini RAG can take up to 40s on complex queries."
+        f"axios.post timeout(s) too short: {low}ms — minimum is 30,000ms (30s). "
+        "Gemini RAG can take up to 40s on complex queries. "
+        "Note: the 3000ms axios.get health probe is intentional and not checked here."
     )
 
 

@@ -54,12 +54,13 @@ jobs:
           import re
           from pathlib import Path
           js = Path("bridge/index.js").read_text()
-          timeouts = [int(x) for x in re.findall(r"timeout:\s*(\d+)", js)]
-          low = [t for t in timeouts if t < 30000]
+          # Only check axios.post timeouts — the 3000ms health probe GET is intentional
+          post_timeouts = [int(x) for x in re.findall(r"axios\.post\([^)]*timeout:\s*(\d+)", js, re.DOTALL)]
+          low = [t for t in post_timeouts if t < 30000]
           if low:
-              print(f"❌ Axios timeout(s) too low: {low}ms — must be >= 30000ms")
+              print(f"❌ axios.post timeout(s) too low: {low}ms — must be >= 30000ms")
               exit(1)
-          print(f"✅ All Axios timeouts OK: {timeouts}ms")
+          print(f"✅ All axios.post timeouts OK: {post_timeouts}ms")
           EOF
 
       - name: Verify PREFECT_JID env var is used in bridge/index.js
