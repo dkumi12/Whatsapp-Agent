@@ -123,58 +123,28 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
-      - name: Authenticate to Google Cloud
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via Workload Identity
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER || 'projects/1003222001379/locations/global/workloadIdentityPools/github-pool/providers/github-provider' }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT || 'github-deployer@whatsapp-agent-507202.iam.gserviceaccount.com' }}
 
-      - name: Set up gcloud CLI
+      - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Pull & restart on VM (Errors #6, #11)
+      - name: Run deploy script on VM
         run: |
           gcloud compute ssh abami@whatsapp-bridge-vm \
             --zone=us-central1-a \
             --project=whatsapp-agent-507202 \
-            --command="
-              cd /home/abami/Whatsapp-Agent &&
-              git fetch origin main &&
-              git checkout origin/main -- bridge/index.js src/api.py src/config.py src/cohorts.py 2>/dev/null || true &&
-              git pull origin main &&
-              venv/bin/pip install -r requirements.txt --quiet &&
-              pm2 restart whatsapp-bridge --update-env &&
-              pm2 restart fastapi-backend --update-env &&
-              echo DEPLOY_OK
-            "
-
-      - name: Verify PREFECT_JID on VM (Error #2)
-        run: |
-          gcloud compute ssh abami@whatsapp-bridge-vm \
-            --zone=us-central1-a \
-            --project=whatsapp-agent-507202 \
-            --command="grep -q PREFECT_JID /home/abami/Whatsapp-Agent/.env && echo '✅ PREFECT_JID set' || (echo '❌ PREFECT_JID missing' && exit 1)"
-
-      - name: Backend health check post-deploy (Error #3, #4)
-        run: |
-          sleep 15
-          for i in {1..6}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://35.222.39.30:8080/health || echo "000")
-            [ "$STATUS" = "200" ] && echo "✅ Backend healthy" && exit 0
-            echo "Attempt $i/6: HTTP $STATUS — retrying in 10s..."
-            sleep 10
-          done
-          echo "❌ Backend not healthy after deploy" && exit 1
-
-      - name: Queue backlog check (Error #8)
-        run: |
-          gcloud compute ssh abami@whatsapp-bridge-vm \
-            --zone=us-central1-a \
-            --project=whatsapp-agent-507202 \
-            --command="
-              COUNT=\$(wc -l < /home/abami/Whatsapp-Agent/bridge/queue.jsonl 2>/dev/null || echo 0)
-              echo \"📦 Queue backlog: \$COUNT message(s)\"
-              [ \"\$COUNT\" -lt 20 ] || echo '⚠️ High backlog — check if backend was slow during deploy'
-            "
+            --quiet \
+            --command="bash /home/abami/Whatsapp-Agent/scripts/deploy.sh"
 
