@@ -20,19 +20,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Verify critical imports (catches missing packages on VM)
+        run: |
+          python -c "
+          import psycopg, pgvector, fastapi, langgraph, langchain_openai, chromadb
+          print('✅ All critical packages importable')
+          "
+
       - name: Run Pytest
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'sk-or-test-key-placeholder' }}
+          DATABASE_URL: "postgresql://dummy:dummy@localhost/dummy"
+          COHORT_1_GROUP_ID: "120363428812662381@g.us"
+          COHORT_2_GROUP_ID: "120363406407748018@g.us"
         run: |
-          pytest tests/ -v
+          pytest tests/ -v --tb=short
+
+      - name: Check Axios timeout >= 30s in bridge/index.js
+        run: |
+          python - <<'EOF'
+          import re
+          from pathlib import Path
+          js = Path("bridge/index.js").read_text()
+          timeouts = [int(x) for x in re.findall(r"timeout:\s*(\d+)", js)]
+          low = [t for t in timeouts if t < 30000]
+          if low:
+              print(f"❌ Axios timeout(s) too low: {low}ms — must be >= 30000ms")
+              exit(1)
+          print(f"✅ All Axios timeouts OK: {timeouts}ms")
+          EOF
+
+      - name: Verify PREFECT_JID env var is used in bridge/index.js
+        run: |
+          grep -q "process.env.PREFECT_JID" bridge/index.js && \
+            echo "✅ PREFECT_JID env var correctly used" || \
+            (echo "❌ bridge/index.js must use process.env.PREFECT_JID for VIP alerts" && exit 1)
 
   deploy:
     name: Build & Deploy to Cloud Run
@@ -79,3 +113,67 @@ jobs:
             COHORT_2_GROUP_ID=${{ secrets.COHORT_2_GROUP_ID }}
             DATABASE_URL=${{ secrets.DATABASE_URL }}
           flags: '--allow-unauthenticated --min-instances=0 --memory=512Mi --cpu=1'
+
+  # ============================================================
+  # JOB 3 — Deploy bridge + backend to GCP VM via SSH
+  # ============================================================
+  deploy-vm:
+    name: 🚀 Deploy to GCP VM
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Pull & restart on VM (Errors #6, #11)
+        run: |
+          gcloud compute ssh abami@whatsapp-bridge-vm \
+            --zone=us-central1-a \
+            --project=whatsapp-agent-507202 \
+            --command="
+              cd /home/abami/Whatsapp-Agent &&
+              git fetch origin main &&
+              git checkout origin/main -- bridge/index.js src/api.py src/config.py src/cohorts.py 2>/dev/null || true &&
+              git pull origin main &&
+              venv/bin/pip install -r requirements.txt --quiet &&
+              pm2 restart whatsapp-bridge --update-env &&
+              pm2 restart fastapi-backend --update-env &&
+              echo DEPLOY_OK
+            "
+
+      - name: Verify PREFECT_JID on VM (Error #2)
+        run: |
+          gcloud compute ssh abami@whatsapp-bridge-vm \
+            --zone=us-central1-a \
+            --project=whatsapp-agent-507202 \
+            --command="grep -q PREFECT_JID /home/abami/Whatsapp-Agent/.env && echo '✅ PREFECT_JID set' || (echo '❌ PREFECT_JID missing' && exit 1)"
+
+      - name: Backend health check post-deploy (Error #3, #4)
+        run: |
+          sleep 15
+          for i in {1..6}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://35.222.39.30:8080/health || echo "000")
+            [ "$STATUS" = "200" ] && echo "✅ Backend healthy" && exit 0
+            echo "Attempt $i/6: HTTP $STATUS — retrying in 10s..."
+            sleep 10
+          done
+          echo "❌ Backend not healthy after deploy" && exit 1
+
+      - name: Queue backlog check (Error #8)
+        run: |
+          gcloud compute ssh abami@whatsapp-bridge-vm \
+            --zone=us-central1-a \
+            --project=whatsapp-agent-507202 \
+            --command="
+              COUNT=\$(wc -l < /home/abami/Whatsapp-Agent/bridge/queue.jsonl 2>/dev/null || echo 0)
+              echo \"📦 Queue backlog: \$COUNT message(s)\"
+              [ \"\$COUNT\" -lt 20 ] || echo '⚠️ High backlog — check if backend was slow during deploy'
+            "
+
