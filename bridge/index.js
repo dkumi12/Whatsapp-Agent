@@ -4,6 +4,22 @@ if (!globalThis.crypto) globalThis.crypto = crypto;
 
 const fs = require('fs');
 const path = require('path');
+
+// Auto-load root .env if not injected by environment
+const envFile = path.join(__dirname, '../.env');
+if (fs.existsSync(envFile)) {
+    try {
+        const envContent = fs.readFileSync(envFile, 'utf8');
+        for (const line of envContent.split('\n')) {
+            const m = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+            if (m) {
+                const key = m[1];
+                let val = (m[2] || '').trim().replace(/^['"]|['"]$/g, '');
+                if (!process.env[key]) process.env[key] = val;
+            }
+        }
+    } catch {}
+}
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
