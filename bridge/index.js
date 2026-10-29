@@ -207,6 +207,54 @@ app.get('/groups', async (req, res) => {
     }
 });
 
+app.get('/status', async (req, res) => {
+    let authCount = 0;
+    try {
+        const files = fs.readdirSync(path.join(__dirname, 'auth_info_baileys'));
+        authCount = files.length;
+    } catch {}
+
+    res.json({
+        connected: isConnected,
+        user: sock?.user || null,
+        uptimeSeconds: Math.floor(process.uptime()),
+        authFilesCount: authCount,
+        prefectJid: process.env.PREFECT_JID || 'not set',
+        timestamp: new Date().toISOString()
+    });
+});
+
+app.get('/test-send', async (req, res) => {
+    if (!sock || !isConnected) {
+        return res.status(503).json({ error: 'WhatsApp Bridge is not connected.' });
+    }
+    const target = req.query.jid || process.env.PREFECT_JID || (sock.user ? jidNormalizedUser(sock.user.id) : null);
+    if (!target) {
+        return res.status(400).json({ error: 'No target JID available.' });
+    }
+
+    const testText = `🧪 [Bridge Diagnostic Ping]\n` +
+                     `Time: ${new Date().toUTCString()}\n` +
+                     `Bridge JID: ${sock.user?.id}\n` +
+                     `Status: Active & Connected 24/7\n` +
+                     `If you can read this cleanly, your device E2EE session ratchet is working!`;
+
+    try {
+        console.log(`📤 [Sending Diagnostic Test Message to ${target}]...`);
+        const result = await sock.sendMessage(target, { text: testText });
+        console.log(`✅ [Diagnostic Test Message Sent! ID: ${result?.key?.id}]`);
+        res.json({
+            status: 'sent',
+            targetJid: target,
+            messageId: result?.key?.id,
+            timestamp: result?.messageTimestamp
+        });
+    } catch (err) {
+        console.error('❌ Failed to send diagnostic test message:', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.listen(QR_PORT, () => {
     console.log(`🌐 QR Web Page: http://localhost:${QR_PORT}/qr`);
 });
@@ -269,14 +317,17 @@ async function startBridge() {
 
         sock.ev.on('messages.upsert', async (m) => {
             for (const msg of m.messages) {
-                if (!msg.message) continue;
+                const rawJid = msg.key?.remoteJid;
+                if (!rawJid || rawJid === 'status@broadcast') continue;
+
+                if (!msg.message) {
+                    if (!msg.messageStubType) {
+                        console.log(`⚠️ [Undecryptable / Waiting Message from ${rawJid} (ID: ${msg.key?.id})]`);
+                    }
+                    continue;
+                }
 
                 const text = extractMessageText(msg.message) || "";
-                const hasDocument = !!(msg.message?.documentMessage || msg.message?.documentWithCaptionMessage?.message?.documentMessage);
-                if (!text && !hasDocument) continue;
-
-                const rawJid = msg.key.remoteJid;
-                if (!rawJid || rawJid === 'status@broadcast') continue;
 
                 const remoteJid = jidNormalizedUser(rawJid);
                 const isGroup = remoteJid.endsWith('@g.us');
